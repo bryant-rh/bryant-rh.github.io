@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<search>
+  <entry>
+    <title>如何编写最佳的Dockerfile</title>
+    <url>/2021/12/08/%E5%A6%82%E4%BD%95%E7%BC%96%E5%86%99%E6%9C%80%E4%BD%B3%E7%9A%84Dockerfile/</url>
+    <content><![CDATA[<p>原文: <a href="https://rock-it.pl/how-to-write-excellent-dockerfiles/">How to write excellent Dockerfiles</a><br /><br><br />Dockerfile的语法非常简单，然而如何加快镜像构建速度，如何减少Docker镜像的大小却不是那么直观，需要积累实践经验。这篇文章可以帮助你快速掌握编写Dockerfile的技巧。</p>
+<h1 id="目标"><a href="#目标" class="headerlink" title="目标"></a>目标</h1><ul>
+<li>更快的构建速度</li>
+<li>更小的Docker镜像大小</li>
+<li>更少的Docker镜像层</li>
+<li>充分利用镜像缓存</li>
+<li>增加Dockerfile可读性</li>
+<li>让Docker容器使用起来更简单</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h1><ul>
+<li>编写.dockerignore文件</li>
+<li>容器只运行单个应用</li>
+<li>将多个RUN指令合并为一个</li>
+<li>基础镜像的标签不要用latest</li>
+<li>每个RUN指令后删除多余文件</li>
+<li>选择合适的基础镜像(alpine版本最好)</li>
+<li>设置WORKDIR和CMD</li>
+<li>使用ENTRYPOINT (可选)</li>
+<li>在entrypoint脚本中使用exec</li>
+<li>COPY与ADD优先使用前者</li>
+<li>合理调整COPY与RUN的顺序</li>
+<li>设置默认的环境变量，映射端口和数据卷</li>
+<li>使用LABEL设置镜像元数据</li>
+<li>添加HEALTHCHECK</li>
+<li>多阶段构建</li>
+</ul>
+<h1 id="示例"><a href="#示例" class="headerlink" title="示例"></a>示例</h1><p>示例Dockerfile犯了几乎所有的错(当然我是故意的)。接下来，我会一步步优化它。假设我们需要使用Docker运行一个Node.js应用，下面就是它的Dockerfile(CMD指令太复杂了，所以我简化了，它是错误的，仅供参考)。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> ubuntu</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get update  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get upgrade -y  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get install -y nodejs ssh mysql  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="comment"># this should start three processes, mysql and ssh</span></span><br><span class="line"><span class="comment"># in the background and node app in foreground</span></span><br><span class="line"><span class="comment"># isn&#x27;t it beautifully terrible? &lt;3</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> mysql &amp; sshd &amp; npm start</span></span><br></pre></td></tr></table></figure>
+<p>构建镜像:</p>
+<table>
+<thead>
+<tr>
+<th>docker build -t wtf .</th>
+</tr>
+</thead>
+</table>
+<p>你能发现上面Dockerfile所有的错误吗? 不能? 那接下来让我们一步一步完善它。</p>
+<h1 id="优化"><a href="#优化" class="headerlink" title="优化"></a>优化</h1><h2 id="1-编写-dockerignore文件"><a href="#1-编写-dockerignore文件" class="headerlink" title="1. 编写.dockerignore文件"></a>1. 编写.dockerignore文件</h2><p>构建镜像时，Docker需要先准备<code>context</code> ，将所有需要的文件收集到进程中。默认的<code>context</code>包含Dockerfile目录中的所有文件，但是实际上，<strong>我们并不需要.git目录，node_modules目录等内容</strong>。 <code>.dockerignore</code> 的作用和语法类似于 <code>.gitignore</code>，可以忽略一些不需要的文件，这样可以有效加快镜像构建时间，同时减少Docker镜像的大小。示例如下:</p>
+<table>
+<thead>
+<tr>
+<th>.git/node_modules/</th>
+</tr>
+</thead>
+</table>
+<p><a name="0AFc4"></a></p>
+<h3 id=""><a href="#" class="headerlink" title=""></a></h3><p><a name="vCb0E"></a></p>
+<h2 id="2-容器只运行单个应用"><a href="#2-容器只运行单个应用" class="headerlink" title="2. 容器只运行单个应用"></a>2. 容器只运行单个应用</h2><p>从技术角度讲，你可以在Docker容器中运行多个进程。你可以将数据库，前端，后端，ssh，supervisor都运行在同一个Docker容器中。但是，这会让你非常痛苦:</p>
+<ul>
+<li>非常长的构建时间(修改前端之后，整个后端也需要重新构建)</li>
+<li>非常大的镜像大小</li>
+<li>多个应用的日志难以处理(不能直接使用stdout，否则多个应用的日志会混合到一起)</li>
+<li>横向扩展时非常浪费资源(不同的应用需要运行的容器数并不相同)</li>
+<li>僵尸进程问题 - 你需要选择合适的init进程</li>
+</ul>
+<p>因此，建议大家为每个应用构建单独的Docker镜像，然后使用 <a href="https://docs.docker.com/compose/">Docker Compose</a> 运行多个Docker容器。<br />现在，我从Dockerfile中删除一些不需要的安装包，另外，SSH可以用<a href="https://docs.docker.com/engine/reference/commandline/exec/">docker exec</a>替代。示例如下：</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> ubuntu</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get update  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get upgrade -y</span></span><br><span class="line"><span class="comment"># we should remove ssh and mysql, and use</span></span><br><span class="line"><span class="comment"># separate container for database </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get install -y nodejs  <span class="comment"># ssh mysql  </span></span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+<p><a name="RcJuG"></a></p>
+<h2 id="3-将多个RUN指令合并为一个"><a href="#3-将多个RUN指令合并为一个" class="headerlink" title="3. 将多个RUN指令合并为一个"></a>3. 将多个RUN指令合并为一个</h2><p>Docker镜像是分层的，下面这些知识点非常重要:</p>
+<ul>
+<li>Dockerfile中的每个指令都会创建一个新的镜像层。</li>
+<li>镜像层将被缓存和复用</li>
+<li>当Dockerfile的指令修改了，复制的文件变化了，或者构建镜像时指定的变量不同了，对应的镜像层缓存就会失效</li>
+<li>某一层的镜像缓存失效之后，它之后的镜像层缓存都会失效</li>
+<li>镜像层是不可变的，如果我们再某一层中添加一个文件，然后在下一层中删除它，则镜像中依然会包含该文件(只是这个文件在Docker容器中不可见了)。</li>
+</ul>
+<p>Docker镜像类似于洋葱。它们都有很多层。为了修改内层，则需要将外面的层都删掉。记住这一点的话，其他内容就很好理解了。<br />现在，我们<strong>将所有的<a href="https://docs.docker.com/engine/reference/builder/#run">RUN</a>指令合并为一个</strong>。同时把<code>apt-get upgrade</code>删除，因为它会使得镜像构建非常不确定(我们只需要依赖基础镜像的更新就好了)</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> ubuntu</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get update \  </span></span><br><span class="line">    &amp;&amp; apt-get install -y nodejs \</span><br><span class="line">    &amp;&amp; cd /app \</span><br><span class="line">    &amp;&amp; npm install</span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+<p>记住一点，我们只能将变化频率一样的指令合并在一起。将node.js安装与npm模块安装放在一起的话，则每次修改源代码，都需要重新安装node.js，这显然不合适。因此，正确的写法是这样的:</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> ubuntu</span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get update &amp;&amp; apt-get install -y nodejs  </span></span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+<p><a name="QKnRe"></a></p>
+<h2 id="4-基础镜像的标签不要用latest"><a href="#4-基础镜像的标签不要用latest" class="headerlink" title="4. 基础镜像的标签不要用latest"></a>4. 基础镜像的标签不要用latest</h2><p>当镜像没有指定标签时，将默认使用<code>latest</code> 标签。因此， <code>FROM ubuntu</code> 指令等同于<code>FROM ubuntu:latest</code>。当时，当镜像更新时，latest标签会指向不同的镜像，这时构建镜像有可能失败。如果你的确需要使用最新版的基础镜像，可以使用latest标签，否则的话，最好指定确定的镜像标签。<br />示例Dockerfile应该使用<code>16.04</code>作为标签。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> ubuntu:<span class="number">16.04</span>  <span class="comment"># it&#x27;s that easy!</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get update &amp;&amp; apt-get install -y nodejs  </span></span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+<p><a name="gxved"></a></p>
+<h2 id="5-每个RUN指令后删除多余文件"><a href="#5-每个RUN指令后删除多余文件" class="headerlink" title="5. 每个RUN指令后删除多余文件"></a>5. 每个RUN指令后删除多余文件</h2><p>假设我们更新了apt-get源，下载，解压并安装了一些软件包，它们都保存在<code>/var/lib/apt/lists/</code>目录中。但是，运行应用时Docker镜像中并不需要这些文件。我们最好将它们删除，因为它会使Docker镜像变大。<br />示例Dockerfile中，我们可以删除<code>/var/lib/apt/lists/</code>目录中的文件(它们是由apt-get update生成的)。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> ubuntu:<span class="number">16.04</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt-get update \  </span></span><br><span class="line">    &amp;&amp; apt-get install -y nodejs \</span><br><span class="line">    <span class="comment"># added lines</span></span><br><span class="line">    &amp;&amp; rm -rf /var/lib/apt/lists/*</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+<p><a name="qFNWN"></a></p>
+<h2 id="6-选择合适的基础镜像-alpine版本最好"><a href="#6-选择合适的基础镜像-alpine版本最好" class="headerlink" title="6. 选择合适的基础镜像(alpine版本最好)"></a>6. 选择合适的基础镜像(alpine版本最好)</h2><p>在示例中，我们选择了<code>ubuntu</code>作为基础镜像。但是我们只需要运行node程序，有必要使用一个通用的基础镜像吗？<code>node</code>镜像应该是更好的选择。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="comment"># we don&#x27;t need to install node </span></span><br><span class="line"><span class="comment"># anymore and use apt-get</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+<p>更好的选择是alpine版本的<code>node</code>镜像。alpine是一个极小化的Linux发行版，只有4MB，这让它非常适合作为基础镜像。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> <span class="built_in">cd</span> /app &amp;&amp; npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> npm start</span></span><br></pre></td></tr></table></figure>
+
+<p><br /><a href="https://wiki.alpinelinux.org/wiki/Alpine_Linux_package_management">apk</a>是Alpine的包管理工具。它与<code>apt-get</code>有些不同，但是非常容易上手。另外，它还有一些非常有用的特性，比如<code>no-cache</code>和 <code>--virtual</code>选项，它们都可以帮助我们减少镜像的大小。<br /></p>
+<p><a name="QZ1If"></a></p>
+<h2 id="7-设置WORKDIR和-CMD"><a href="#7-设置WORKDIR和-CMD" class="headerlink" title="7. 设置WORKDIR和 CMD"></a>7. 设置WORKDIR和 CMD</h2><p><a href="https://docs.docker.com/engine/reference/builder/#workdir">WORKDIR</a>指令可以设置默认目录，也就是运行<code>RUN</code> / <code>CMD</code> / <code>ENTRYPOINT</code>指令的地方。<br /><a href="https://docs.docker.com/engine/reference/builder/#cmd">CMD</a>指令可以设置容器创建是执行的默认命令。另外，你应该讲命令写在一个数组中，数组中每个元素为命令的每个单词(参考<a href="https://docs.docker.com/engine/reference/builder/#cmd">官方文档</a>)。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine</span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app  </span></span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> npm install</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;npm&quot;</span>, <span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p><a name="ttcJL"></a></p>
+<h2 id="8-使用ENTRYPOINT-可选"><a href="#8-使用ENTRYPOINT-可选" class="headerlink" title="8. 使用ENTRYPOINT (可选)"></a>8. 使用ENTRYPOINT (可选)</h2><p><a href="https://docs.docker.com/engine/reference/builder/#entrypoint">ENTRYPOINT</a>指令并不是必须的，因为它会增加复杂度。<code>ENTRYPOINT</code>是一个脚本，它会默认执行，并且将指定的命令当成参数接收。它通常用于构建可执行的Docker镜像。entrypoint.sh如下:</p>
+<table>
+<thead>
+<tr>
+<th>#!/usr/bin/env sh_# $0 is a script name, <strong># $1, $2, $3 etc are passed arguments</strong># $1 is our command_CMD=$1case “$CMD” in    “dev” )    npm install    export NODE_ENV=development    exec npm run dev    ;;  “start” )    _# we can modify files here, using ENV variables passed in _    <em># “docker create” command. It can’t be done during build process.</em>    echo “db: $DATABASE_ADDRESS” &gt;&gt; /app/config.yml    export NODE_ENV=production    exec npm start    ;;   * )    _# Run custom command. Thanks to this line we can still use _    <em># “docker run our_image /bin/bash” and it will work</em>    exec $CMD ${@:2}    ;;esac</th>
+</tr>
+</thead>
+</table>
+<p>示例Dockerfile:</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine</span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app  </span></span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> npm install</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;./entrypoint.sh&quot;</span>]  </span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+
+<p><br />可以使用如下命令运行该镜像:</p>
+<table>
+<thead>
+<tr>
+<th>_# 运行开发版本_docker run our-app dev _# 运行生产版本_docker run our-app start _# 运行bash_docker run -it our-app /bin/bash</th>
+</tr>
+</thead>
+</table>
+<p><a name="kPgk7"></a></p>
+<h2 id="9-在entrypoint脚本中使用exec"><a href="#9-在entrypoint脚本中使用exec" class="headerlink" title="9. 在entrypoint脚本中使用exec"></a>9. 在entrypoint脚本中使用exec</h2><p>在前文的entrypoint脚本中，我使用了<code>exec</code>命令运行node应用。不使用<code>exec</code>的话，我们则不能顺利地关闭容器，因为SIGTERM信号会被bash脚本进程吞没。<code>exec</code>命令启动的进程可以取代脚本进程，因此所有的信号都会正常工作。<br />这里扩展介绍一下docker容器的停止过程：<br />(1). 对于容器来说，<code>init</code> 系统不是必须的，当你通过命令 <code>docker stop mycontainer</code> 来停止容器时，docker CLI 会将 <code>TERM</code> 信号发送给 mycontainer 的 <code>PID</code> 为 1 的进程。</p>
+<ul>
+<li><strong>如果 PID 1 是 init 进程</strong> - 那么 PID 1 会将 TERM 信号转发给子进程，然后子进程开始关闭，最后容器终止。</li>
+<li><strong>如果没有 init 进程</strong>- 那么容器中的应用进程（Dockerfile 中的<code>ENTRYPOINT</code>或<code>CMD</code>指定的应用）就是 PID 1，应用进程直接负责响应<code>TERM</code>信号。这时又分为两种情况：<ul>
+<li><strong>应用不处理 SIGTERM</strong> - 如果应用没有监听 <code>SIGTERM</code> 信号，或者应用中没有实现处理 <code>SIGTERM</code> 信号的逻辑，应用就不会停止，容器也不会终止。</li>
+<li><strong>容器停止时间很长</strong> - 运行命令 <code>docker stop mycontainer</code> 之后，Docker 会等待 <code>10s</code>，如果 <code>10s</code> 后容器还没有终止，Docker 就会绕过容器应用直接向内核发送 <code>SIGKILL</code>，内核会强行杀死应用，从而终止容器。</li>
+</ul>
+</li>
+</ul>
+<p>(2).如果容器中的进程没有收到 <code>SIGTERM</code> 信号，很有可能是因为应用进程不是 <code>PID 1</code>，PID 1 是 <code>shell</code>，而应用进程只是 <code>shell</code> 的子进程。而 shell 不具备 <code>init</code> 系统的功能，也就不会将操作系统的信号转发到子进程上，这也是容器中的应用没有收到 <code>SIGTERM</code> 信号的常见原因。<br /><br><br />问题的根源就来自 <code>Dockerfile</code>，例如：</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> alpine:<span class="number">3.7</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> popcorn.sh .</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> chmod +x popcorn.sh</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> ./popcorn.sh</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+
+<p><br /><code>ENTRYPOINT</code> 指令使用的是 **<a href="https://docs.docker.com/engine/reference/builder/#shell-form-entrypoint-example">shell 模式</a>**，这样 Docker 就会把应用放到 <code>shell</code> 中运行，因此 <code>shell</code> 是 PID 1。<br />解决方案有以下几种：<br><a name="dKnEc"></a></p>
+<h3 id="方案-1：使用-exec-模式的-ENTRYPOINT-指令"><a href="#方案-1：使用-exec-模式的-ENTRYPOINT-指令" class="headerlink" title="方案 1：使用 exec 模式的 ENTRYPOINT 指令"></a>方案 1：使用 exec 模式的 ENTRYPOINT 指令</h3><p>与其使用 shell 模式，不如使用 <a href="https://docs.docker.com/engine/reference/builder/#exec-form-entrypoint-example">exec 模式</a>，例如：</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> alpine:<span class="number">3.7</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> popcorn.sh .</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> chmod +x popcorn.sh</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;./popcorn.sh&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p>这样 PID 1 就是 <code>./popcorn.sh</code>，它将负责响应所有发送到容器的信号，至于 <code>./popcorn.sh</code> 是否真的能捕捉到系统信号，那是另一回事。<br />举个例子，假设使用上面的 Dockerfile 来构建镜像，<code>popcorn.sh</code> 脚本每过一秒打印一次日期：<br /></p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line"><span class="meta">#!/bin/sh</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">while</span> <span class="literal">true</span></span><br><span class="line"><span class="keyword">do</span></span><br><span class="line">    date</span><br><span class="line">    sleep 1</span><br><span class="line"><span class="keyword">done</span></span><br></pre></td></tr></table></figure>
+<p>构建镜像并创建容器：</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">docker build -t truek8s/popcorn .</span><br><span class="line">docker run -it --name corny --rm truek8s/popcorn</span><br></pre></td></tr></table></figure>
+<p>打开另外一个终端执行停止容器的命令，并计时：</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">time docker stop corny</span><br></pre></td></tr></table></figure>
+<p>因为 <code>popcorn.sh</code> 并没有实现捕获和处理 <code>SIGTERM</code> 信号的逻辑，所以需要 10s 左右才能停止容器。要想解决这个问题，就要往脚本中添加信号处理代码，让它捕获到 <code>SIGTERM</code> 信号时就终止进程：</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line"><span class="meta">#!/bin/sh</span></span><br><span class="line"><span class="comment"># catch the TERM signal and then exit</span></span><br><span class="line"><span class="built_in">trap</span> <span class="string">&quot;exit&quot;</span> TERM</span><br><span class="line"><span class="keyword">while</span> <span class="literal">true</span></span><br><span class="line"><span class="keyword">do</span></span><br><span class="line">    date</span><br><span class="line">    sleep 1</span><br><span class="line"><span class="keyword">done</span></span><br></pre></td></tr></table></figure>
+<p><strong>注意：下面这条指令与 shell 模式的 ENTRYPOINT 指令是等效的：</strong></p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">ENTRYPOINT [<span class="string">&quot;/bin/sh&quot;</span>, <span class="string">&quot;./popcorn.sh&quot;</span>]</span><br></pre></td></tr></table></figure>
+<p><a name="ffQPw"></a></p>
+<h3 id="方案-2：直接使用-exec-命令"><a href="#方案-2：直接使用-exec-命令" class="headerlink" title="方案 2：直接使用 exec 命令"></a>方案 2：直接使用 exec 命令</h3><p>如果你就想使用 <code>shell</code> 模式的 ENTRYPOINT 指令，也不是不可以，只需将启动命令追加到 <code>exec</code> 后面即可，例如：</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> alpine:<span class="number">3.7</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> popcorn.sh .</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> chmod +x popcorn.sh</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> <span class="built_in">exec</span> ./popcorn.sh</span></span><br></pre></td></tr></table></figure>
+<p>这样 <code>exec</code> 就会将 shell 进程替换为 <code>./popcorn.sh</code> 进程，PID 1 仍然是 <code>./popcorn.sh</code>。<br /></p>
+<p><a name="fNwZf"></a></p>
+<h3 id="方案-3：使用-init-系统"><a href="#方案-3：使用-init-系统" class="headerlink" title="方案 3：使用 init 系统"></a>方案 3：使用 init 系统</h3><p>如果容器中的应用默认无法处理 <code>SIGTERM</code> 信号，又不能修改代码，这时候方案 1 和 2 都行不通了，只能在容器中添加一个 <code>init</code> 系统。init 系统有很多种，这里推荐使用 tini，它是专用于容器的轻量级 init 系统，使用方法也很简单：</p>
+<ol>
+<li>安装 <code>tini</code></li>
+<li>将 <code>tini</code> 设为容器的默认应用</li>
+<li>将 <code>popcorn.sh</code> 作为 <code>tini</code> 的参数</li>
+</ol>
+<p>具体的 Dockerfile 如下：</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> alpine:<span class="number">3.7</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> popcorn.sh .</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> chmod +x popcorn.sh</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apk add --no-cache tini</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;/sbin/tini&quot;</span>, <span class="string">&quot;--&quot;</span>, <span class="string">&quot;./popcorn.sh&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p>现在 ```<br>tini</p>
+<figure class="highlight autohotkey"><table><tr><td class="code"><pre><span class="line"> 就是 PID <span class="number">1</span>，它会将收到的系统信号转发给子进程 ```</span><br><span class="line">popcorn.sh</span><br></pre></td></tr></table></figure>
+<p>。<a name="VYfnJ"></a></p>
+<h3 id="-1"><a href="#-1" class="headerlink" title=""></a></h3><p><a name="fxwdy"></a></p>
+<h2 id="10-COPY与ADD优先使用前者"><a href="#10-COPY与ADD优先使用前者" class="headerlink" title="10. COPY与ADD优先使用前者"></a>10. COPY与ADD优先使用前者</h2><p><a href="https://docs.docker.com/engine/reference/builder/#copy">COPY</a>指令非常简单，仅用于将文件拷贝到镜像中。<a href="https://docs.docker.com/engine/reference/builder/#add">ADD</a>相对来讲复杂一些，可以用于下载远程文件以及解压压缩包(参考<a href="https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#add-or-copy">官方文档</a>)。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine</span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> . /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> npm install</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;./entrypoint.sh&quot;</span>]  </span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+
+
+<p><a name="vzrX9"></a></p>
+<h2 id="11-合理调整COPY与RUN的顺序"><a href="#11-合理调整COPY与RUN的顺序" class="headerlink" title="11. 合理调整COPY与RUN的顺序"></a>11. 合理调整COPY与RUN的顺序</h2><p>我们应该<strong>把变化最少的部分放在Dockerfile的前面</strong>，这样可以充分利用镜像缓存。<br />在构建镜像的时候,docker 会按照<code>dockerfile</code>中的指令顺序来一次执行。每一个指令被执行的时候 docker 都会去缓存中检查是否有已经存在的镜像可以复用，而不是去创建一个新的镜像复制。<br />如果不想使用构建缓存,可以使用<code>docker build</code>参数选项<code>--no-cache=true</code>来禁用构建缓存。在使用镜像缓存时,要弄清楚缓存合适生效,何时失效。构建缓存最基本规则如下:</p>
+<ul>
+<li>如果引用的父镜像在构建缓存中,下一个命令将会和所有从该父进程派生的子镜像做比较,如果有子镜像使用相同的命令,那么缓存命中,否则缓存失效。</li>
+<li>在大部分情况下,通过比较<code>Dockerfile</code>中的指令和子镜像已经足够了。但是有些指令需要进一步的检查。</li>
+<li>对于<code>ADD</code>和<code>COPY</code>指令, 文件的内容会被检查,并且会计算每一个文件的校验码。但是文件最近一次的修改和访问时间不在校验码的考虑范围内。在构建过程中,docker 会比对已经存在的镜像,只要有文件内容和元数据发生变动，那么缓存就会失效。</li>
+<li>除了<code>ADD</code>和<code>COPY</code>指令,镜像缓存不会检查容器中文件来判断是否命中缓存。例如,在处理<code>RUN apt-get -y update</code>命令时,不会检查容器中的更新文件以确定是否命中缓存,这种情况下只会检查命令字符串是否相同。</li>
+</ul>
+<p><br />示例中，源代码会经常变化，则每次构建镜像时都需要重新安装NPM模块，这显然不是我们希望看到的。因此我们可以先拷贝<code>package.json</code>，然后安装NPM模块，最后才拷贝其余的源代码。这样的话，即使源代码变化，也不需要重新安装NPM模块。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine</span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> package.json /app  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> npm install  </span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> . /app</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;./entrypoint.sh&quot;</span>]  </span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p>同样举一反三，Python项目的时候，我们同样可以先拷贝requerements.txt,然后进行pip install requerements.txt，最后再进行COPY 代码。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line">ROM python:<span class="number">3.6</span></span><br><span class="line"><span class="comment"># 创建 app 目录</span></span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app</span></span><br><span class="line"><span class="comment"># 安装 app 依赖</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> src/requirements.txt ./</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> pip install -r requirements.txt</span></span><br><span class="line"><span class="comment"># 打包 app 源码</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> src /app</span></span><br><span class="line"><span class="keyword">EXPOSE</span> <span class="number">8080</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [ <span class="string">&quot;python&quot;</span>, <span class="string">&quot;server.py&quot;</span> ]</span></span><br></pre></td></tr></table></figure>
+<br />
+<a name="w9NsD"></a>
+## 12. 设置默认的环境变量，映射端口和数据卷
+运行Docker容器时很可能需要一些环境变量。在Dockerfile设置默认的环境变量是一种很好的方式。另外，我们应该在Dockerfile中设置映射端口和数据卷。示例如下:
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine</span><br><span class="line"><span class="keyword">ENV</span> PROJECT_DIR=/app</span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> <span class="variable">$PROJECT_DIR</span></span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> package.json <span class="variable">$PROJECT_DIR</span>  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> npm install  </span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> . <span class="variable">$PROJECT_DIR</span></span></span><br><span class="line"><span class="keyword">ENV</span> MEDIA_DIR=/media \  </span><br><span class="line">    NODE_ENV=production \</span><br><span class="line">    APP_PORT=<span class="number">3000</span></span><br><span class="line"><span class="keyword">VOLUME</span><span class="bash"> <span class="variable">$MEDIA_DIR</span>  </span></span><br><span class="line"><span class="keyword">EXPOSE</span> $APP_PORT</span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;./entrypoint.sh&quot;</span>]  </span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+[ENV](https://docs.docker.com/engine/reference/builder/#env)指令指定的环境变量在容器中可以使用。如果你只是需要指定构建镜像时的变量，你可以使用[ARG](https://docs.docker.com/engine/reference/builder/#arg)指令。<br />
+
+<p><a name="doaF1"></a></p>
+<h2 id="13-使用LABEL设置镜像元数据"><a href="#13-使用LABEL设置镜像元数据" class="headerlink" title="13. 使用LABEL设置镜像元数据"></a>13. 使用LABEL设置镜像元数据</h2><p>使用<a href="https://docs.docker.com/engine/reference/builder/#label">LABEL</a>指令，可以为镜像设置元数据，例如<strong>镜像创建者</strong>或者<strong>镜像说明</strong>。旧版的Dockerfile语法使用<a href="https://docs.docker.com/engine/reference/builder/#maintainer-deprecated">MAINTAINER</a>指令指定镜像创建者，但是它已经被弃用了。有时，一些外部程序需要用到镜像的元数据，例如<a href="https://github.com/NVIDIA/nvidia-docker">nvidia-docker</a>需要用到<code>com.nvidia.volumes.needed</code>。示例如下:</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine  </span><br><span class="line"><span class="keyword">LABEL</span><span class="bash"> maintainer <span class="string">&quot;jakub.skalecki@example.com&quot;</span>  </span></span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+
+<p><a name="ch4CL"></a></p>
+<h2 id="14-添加HEALTHCHECK"><a href="#14-添加HEALTHCHECK" class="headerlink" title="14. 添加HEALTHCHECK"></a>14. 添加HEALTHCHECK</h2><p>运行容器时，可以指定<code>--restart always</code>选项。这样的话，容器崩溃时，Docker守护进程(docker daemon)会重启容器。对于需要长时间运行的容器，这个选项非常有用。但是，如果容器的确在运行，但是不可(陷入死循环，配置错误)用怎么办？使用<a href="https://docs.docker.com/engine/reference/builder/#healthcheck">HEALTHCHECK</a>指令可以让Docker周期性的检查容器的健康状况。我们只需要指定一个命令，如果一切正常的话返回0，否则返回1。对HEALTHCHECK感兴趣的话，可以参考<a href="https://blog.newrelic.com/2016/08/24/docker-health-check-instruction/">这篇博客</a>。示例如下:</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> node:<span class="number">7</span>-alpine  </span><br><span class="line"><span class="keyword">LABEL</span><span class="bash"> maintainer <span class="string">&quot;jakub.skalecki@example.com&quot;</span></span></span><br><span class="line"><span class="keyword">ENV</span> PROJECT_DIR=/app  </span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> <span class="variable">$PROJECT_DIR</span></span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> package.json <span class="variable">$PROJECT_DIR</span>  </span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> npm install  </span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> . <span class="variable">$PROJECT_DIR</span></span></span><br><span class="line"><span class="keyword">ENV</span> MEDIA_DIR=/media \  </span><br><span class="line">    NODE_ENV=production \</span><br><span class="line">    APP_PORT=<span class="number">3000</span></span><br><span class="line"><span class="keyword">VOLUME</span><span class="bash"> <span class="variable">$MEDIA_DIR</span>  </span></span><br><span class="line"><span class="keyword">EXPOSE</span> $APP_PORT  </span><br><span class="line"><span class="keyword">HEALTHCHECK</span><span class="bash"> CMD curl --fail http://localhost:<span class="variable">$APP_PORT</span> || <span class="built_in">exit</span> 1</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [<span class="string">&quot;./entrypoint.sh&quot;</span>]  </span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;start&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p>当请求失败时，<code>curl --fail</code> 命令返回非0状态。<br /></p>
+<p><a name="xTehG"></a></p>
+<h2 id="15-多阶段构建"><a href="#15-多阶段构建" class="headerlink" title="15. 多阶段构建"></a>15. 多阶段构建</h2><p>参考文档《<a href="https://docs.docker.com/develop/develop-images/multistage-build/">https://docs.docker.com/develop/develop-images/multistage-build/</a>》<br />在docker不支持多阶段构建的年代，我们构建docker镜像时通常会采用如下两种方法：<br />方法A.将所有的构建过程编写在同一个Dockerfile中，包括项目及其依赖库的编译、测试、打包等流程，可能会有如下问题：</p>
+<ul>
+<li><strong>- Dockerfile可能会特别臃肿</strong></li>
+<li><strong>- 镜像层次特别深</strong></li>
+<li><strong>- 存在源码泄露的风险</strong></li>
+</ul>
+<p><br />方法B.事先在外部将项目及其依赖库编译测试打包好后，再将其拷贝到构建目录中执行构建镜像。<br />方法B较方法A略显优雅一些，而且可以很好地规避方法A存在的风险点，但仍需要我们编写两套或多套Dockerfile或者一些脚本才能将其两个阶段自动整合起来，例如有多个项目彼此关联和依赖，就需要我们维护多个Dockerfile，或者需要编写更复杂的脚本，导致后期维护成本很高。<br /><br><br />为解决以上问题，**Docker v17.05 开始支持多阶段构建 (multistage builds)**。使用多阶段构建我们就可以很容易解决前面提到的问题，并且只需要编写一个 Dockerfile。<br />你可以在一个 Dockerfile 中使用多个 FROM 语句。每个 FROM 指令都可以使用不同的基础镜像，并表示开始一个新的构建阶段。你可以很方便的将一个阶段的文件复制到另外一个阶段，在最终的镜像中保留下你需要的内容即可。<br />默认情况下，构建阶段是没有命令的，我们可以通过它们的索引来引用它们，第一个 FROM 指令从0开始，我们也可以用AS指令为构建阶段命名。<br><a name="lpNtj"></a></p>
+<h3 id="案例1"><a href="#案例1" class="headerlink" title="案例1"></a>案例1</h3><figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> golang:<span class="number">1.7</span>.<span class="number">3</span></span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /go/src/github.com/alexellis/href-counter/</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> go get -d -v golang.org/x/net/html</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> app.go .</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app .</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">FROM</span> alpine:latest</span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apk --no-cache add ca-certificates</span></span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /root/</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> --from=0 /go/src/github.com/alexellis/href-counter/app .</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;./app&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p>通过 <code>docker build</code> 构建后，最终结果是产生与之前相同大小的 Image，但复杂性显著降低。您不需要创建任何中间 Image，也不需要将任何编译结果临时提取到本地系统。<br />哪它是如何工作的呢？关键就在 <code>COPY --from=0</code> 这个指令上。Dockerfile 中第二个 FROM 指令以 alpine:latest 为基础镜像开始了一个新的构建阶段，并通过 <code>COPY --from=0</code> 仅将前一阶段的构建文件复制到此阶段。前一构建阶段中产生的 Go SDK 和任何中间层都会在此阶段中被舍弃，而不是保存在最终 Image 中。<br />使用多阶段构建一个python应用。<br /></p>
+<p><a name="BPLhh"></a></p>
+<h3 id="案例2"><a href="#案例2" class="headerlink" title="案例2"></a>案例2</h3><p>默认情况下，构建阶段是未命名的。您可以通过一个整数值来引用它们，默认是从第 0 个 FROM 指令开始的。 为了方便管理，您也可以通过向 FROM 指令添加 as NAME 来命名您的各个构建阶段。下面的示例就通过命名各个构建阶段并在 COPY 指令中使用名称来访问指定的构建阶段。<br />这样做的好处就是即使稍后重新排序 Dockerfile 中的指令，COPY 指令一样能找到对应的构建阶段。</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> golang:<span class="number">1.7</span>.<span class="number">3</span> as builder</span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /go/src/github.com/alexellis/href-counter/</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> go get -d -v golang.org/x/net/html</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> app.go    .</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app .</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">FROM</span> alpine:latest</span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apk --no-cache add ca-certificates</span></span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /root/</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> --from=builder /go/src/github.com/alexellis/href-counter/app .</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;./app&quot;</span>]</span></span><br></pre></td></tr></table></figure>
+<p><a name="eNuy1"></a></p>
+<h3 id="案例3"><a href="#案例3" class="headerlink" title="案例3"></a>案例3</h3><p><strong>停在特定的构建阶段</strong><br />构建镜像时，不一定需要构建整个 Dockerfile 中每个阶段，您也可以指定需要构建的阶段。比如：您只构建 Dockerfile 中名为 builder 的阶段</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ docker build --target builder -t alexellis2/href-counter:latest .</span><br></pre></td></tr></table></figure>
+<p>此功能适合以下场景：</p>
+<ul>
+<li>调试特定的构建阶段。<br /></li>
+<li>在 Debug 阶段，启用所有程序调试模式或调试工具，而在生产阶段尽量精简。<br /></li>
+<li>在 Testing 阶段，您的应用程序使用测试数据，但在生产阶段则使用生产数据。<br /></li>
+</ul>
+<p><a name="UeM7f"></a></p>
+<h3 id="案例4"><a href="#案例4" class="headerlink" title="案例4"></a>案例4</h3><p><strong>使用外部镜像作为构建阶段</strong><br />使用多阶段构建时，您不仅可以从 Dockerfile 中创建的镜像中进行复制。您还可以使用 <code>COPY --from</code> 指令从单独的 Image 中复制，支持使用本地 Image 名称、本地或 Docker 注册中心可用的标记或标记 ID。</p>
+<figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">COPY --from=nginx:latest /etc/nginx/nginx.conf /nginx.conf</span><br></pre></td></tr></table></figure>
+<p><a name="yJyCX"></a></p>
+<h3 id="案例5"><a href="#案例5" class="headerlink" title="案例5"></a>案例5</h3><p><strong>把前一个阶段作为一个新的阶段</strong><br />在使用 FROM 指令时，您可以通过引用前一阶段停止的地方来继续。同样，采用此方式也可以方便一个团队中的不同角色，如何使用类似流水线的方式，一级一级提供基础镜像，同样更方便快速的复用团队其他人的基础镜像。例如:</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="keyword">FROM</span> alpine:latest as builder</span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apk --no-cache add build-base</span></span><br><span class="line"><span class="keyword">FROM</span> builder as build1</span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> source1.cpp source.cpp</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> g++ -o /binary source.cpp</span></span><br><span class="line"><span class="keyword">FROM</span> builder as build2</span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> source2.cpp source.cpp</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> g++ -o /binary source.cpp</span></span><br></pre></td></tr></table></figure>
+
+
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="comment"># ---- 基础 python 镜像 ----</span></span><br><span class="line"><span class="keyword">FROM</span> python:<span class="number">3.6</span> AS base</span><br><span class="line"><span class="comment"># 创建 app 目录</span></span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app</span></span><br><span class="line"><span class="comment"># ---- 依赖 ----</span></span><br><span class="line"><span class="keyword">FROM</span> base AS dependencies  </span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> gunicorn_app/requirements.txt ./</span></span><br><span class="line"><span class="comment"># 安装 app 依赖</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> pip install -r requirements.txt</span></span><br><span class="line"><span class="comment"># ---- 复制文件并 build ----</span></span><br><span class="line"><span class="keyword">FROM</span> dependencies AS build  </span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> . /app</span></span><br><span class="line"><span class="comment"># 在需要时进行 Build 或 Compile</span></span><br><span class="line"><span class="comment"># --- 使用 Alpine 发布 ----</span></span><br><span class="line"><span class="keyword">FROM</span> python:<span class="number">3.6</span>-alpine3.<span class="number">7</span> AS release  </span><br><span class="line"><span class="comment"># 创建 app 目录</span></span><br><span class="line"><span class="keyword">WORKDIR</span><span class="bash"> /app</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> --from=dependencies /app/requirements.txt ./</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> --from=dependencies /root/.cache /root/.cache</span></span><br><span class="line"><span class="comment"># 安装 app 依赖</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> pip install -r requirements.txt</span></span><br><span class="line"><span class="keyword">COPY</span><span class="bash"> --from=build /app/ ./</span></span><br><span class="line"><span class="keyword">CMD</span><span class="bash"> [<span class="string">&quot;gunicorn&quot;</span>, <span class="string">&quot;--config&quot;</span>, <span class="string">&quot;./gunicorn_app/conf/gunicorn_config.py&quot;</span>, <span class="string">&quot;gunicorn_app:app&quot;</span>]</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
+]]></content>
+  </entry>
+  <entry>
+    <title>Hello World</title>
+    <url>/2021/11/25/hello-world/</url>
+    <content><![CDATA[<p>Welcome to <a href="https://hexo.io/">Hexo</a>! This is your very first post. Check <a href="https://hexo.io/docs/">documentation</a> for more info. If you get any problems when using Hexo, you can find the answer in <a href="https://hexo.io/docs/troubleshooting.html">troubleshooting</a> or you can ask me on <a href="https://github.com/hexojs/hexo/issues">GitHub</a>.</p>
+<h2 id="Quick-Start"><a href="#Quick-Start" class="headerlink" title="Quick Start"></a>Quick Start</h2><span id="more"></span>
+
+<h3 id="Create-a-new-post"><a href="#Create-a-new-post" class="headerlink" title="Create a new post"></a>Create a new post</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo new <span class="string">&quot;My New Post&quot;</span></span><br></pre></td></tr></table></figure>
+
+<p>More info: <a href="https://hexo.io/docs/writing.html">Writing</a></p>
+<h3 id="Run-server"><a href="#Run-server" class="headerlink" title="Run server"></a>Run server</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo server</span><br></pre></td></tr></table></figure>
+
+<p>More info: <a href="https://hexo.io/docs/server.html">Server</a></p>
+<h3 id="Generate-static-files"><a href="#Generate-static-files" class="headerlink" title="Generate static files"></a>Generate static files</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo generate</span><br></pre></td></tr></table></figure>
+
+<p>More info: <a href="https://hexo.io/docs/generating.html">Generating</a></p>
+<h3 id="Deploy-to-remote-sites"><a href="#Deploy-to-remote-sites" class="headerlink" title="Deploy to remote sites"></a>Deploy to remote sites</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo deploy</span><br></pre></td></tr></table></figure>
+
+<p>More info: <a href="https://hexo.io/docs/one-command-deployment.html">Deployment</a></p>
+]]></content>
+  </entry>
+</search>
