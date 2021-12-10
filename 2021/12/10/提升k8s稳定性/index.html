@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 5.4.0">
+<meta name="google-site-verification" content="paV1-u4p5UjCdSNOxZmdJpx6bK3eCJWz7APbpzIRihc" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="/lib/pace/pace-theme-minimal.min.css">
+  <script src="/lib/pace/pace.min.js"></script>
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"bryant-rh.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":"flat"},"back2top":{"enable":true,"sidebar":true,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":false,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="提升资源利用率资源浪费场景 资源预留普遍存在 50% 以上的浪费 Kubernetes 中的 Request(请求) 字段用于管理容器对 CPU 和内存资源预留的机制，保证容器至少可以达到的资源量，该部分资源不能被其他容器抢占，具体可查看。当 Request 设置过小，无法保证业务的资源量，当业务的负载变高时无力承载，因此用户通常习惯将 Request 设置得很高，以保证服务的可靠性。 但实际上，">
+<meta property="og:type" content="article">
+<meta property="og:title" content="提升k8s稳定性">
+<meta property="og:url" content="https://bryant-rh.github.io/2021/12/10/%E6%8F%90%E5%8D%87k8s%E7%A8%B3%E5%AE%9A%E6%80%A7/index.html">
+<meta property="og:site_name" content="Bryant-rh&#39;s Blog">
+<meta property="og:description" content="提升资源利用率资源浪费场景 资源预留普遍存在 50% 以上的浪费 Kubernetes 中的 Request(请求) 字段用于管理容器对 CPU 和内存资源预留的机制，保证容器至少可以达到的资源量，该部分资源不能被其他容器抢占，具体可查看。当 Request 设置过小，无法保证业务的资源量，当业务的负载变高时无力承载，因此用户通常习惯将 Request 设置得很高，以保证服务的可靠性。 但实际上，">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210170318.png">
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210165622.png">
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210170559.png">
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210171726.png">
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210172014.png">
+<meta property="article:published_time" content="2021-12-10T08:00:00.000Z">
+<meta property="article:modified_time" content="2021-12-10T09:47:18.496Z">
+<meta property="article:author" content="Bryant-rh">
+<meta property="article:tag" content="k8s">
+<meta property="article:tag" content="kubernetes">
+<meta property="article:tag" content="稳定性">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210170318.png">
+
+<link rel="canonical" href="https://bryant-rh.github.io/2021/12/10/%E6%8F%90%E5%8D%87k8s%E7%A8%B3%E5%AE%9A%E6%80%A7/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>提升k8s稳定性 | Bryant-rh's Blog</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">Bryant-rh's Blog</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">Love and Peace</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://bryant-rh.github.io/2021/12/10/%E6%8F%90%E5%8D%87k8s%E7%A8%B3%E5%AE%9A%E6%80%A7/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/kuli.jpeg">
+      <meta itemprop="name" content="Bryant-rh">
+      <meta itemprop="description" content="">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Bryant-rh's Blog">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          提升k8s稳定性
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+              
+
+              <time title="创建时间：2021-12-10 16:00:00 / 修改时间：17:47:18" itemprop="dateCreated datePublished" datetime="2021-12-10T16:00:00+08:00">2021-12-10</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/k8s/" itemprop="url" rel="index"><span itemprop="name">k8s</span></a>
+                </span>
+            </span>
+
+          
+            <span class="post-meta-item" title="阅读次数" id="busuanzi_container_page_pv">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-eye"></i>
+              </span>
+              <span class="post-meta-item-text">阅读次数：</span>
+              <span id="busuanzi_value_page_pv"></span>
+            </span><br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.6k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h1 id="提升资源利用率"><a href="#提升资源利用率" class="headerlink" title="提升资源利用率"></a>提升资源利用率</h1><h2 id="资源浪费场景"><a href="#资源浪费场景" class="headerlink" title="资源浪费场景"></a>资源浪费场景</h2><ol>
+<li><p><strong>资源预留普遍存在 50% 以上的浪费</strong></p>
+<p>Kubernetes 中的 Request(请求) 字段用于管理容器对 CPU 和内存资源预留的机制，保证容器至少可以达到的资源量，该部分资源不能被其他容器抢占，具体可<a target="_blank" rel="noopener" href="https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/">查看</a>。当 Request 设置过小，无法保证业务的资源量，当业务的负载变高时无力承载，因此用户通常习惯将 Request 设置得很高，以保证服务的可靠性。</p>
+<p>但实际上，业务在大多数时段时负载不会很高。以 CPU 为例，下图是某个实际业务场景下容器的资源预留（Request）和实际使用量（CPU_Usage）关系图：资源预留远大于实际使用量，两者之间差值所对应的资源不能被其他负载使用，因此 Request 设置过大势必会造成较大的资源浪费。</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210170318.png" alt="20211210170318"></p>
+</li>
+</ol>
+<span id="more"></span>
+
+
+<blockquote>
+<p><font color="#008000">如何解决这样的问题？现阶段需要用户自己根据实际的负载情况设置更合理的 Request、以及限制业务对资源的无限请求，防止资源被某些业务过度占用。这里可以参考后文中的 Request Quota 和 Limit Ranges 的设置</font></p>
+</blockquote>
+<ol start="2">
+<li><p><strong>业务资源波峰波谷现象普遍，通常波谷时间大于波峰时间，资源浪费明显</strong></p>
+<p> 大多数业务存在波峰波谷，例如公交系统通常在白天负载增加，夜晚负载减少；游戏业务通常在周五晚上开始出现波峰，在周日晚开始出现波谷。</p>
+<p> 如下图所示：同一业务在不同的时间段对资源的请求量不同，如果用户设置的是固定的 Request，业务在负载较低时利用率很低。</p>
+<p> <img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210165622.png" alt="20211210165622"></p>
+<blockquote>
+<p><font color="#008000">这时可以通过动态调整副本数，以高资源利用率承载业务的波峰波谷，可以参考k8s原生提供的HPA </font></p>
+</blockquote>
+</li>
+<li><p><strong>不同类型的业务，导致资源利用率有较大差异</strong></p>
+<p>在线业务通常白天负载较高，对时延要求较高，必须优先调度和运行；而离线的计算型业务通常对运行时段和时延要求相对较低，理论上可以在在线业务波谷时运行。此外，有些业务属于计算密集型，对 CPU 资源消耗较多，而有些业务属于内存密集型，对内存消耗较多。</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210170559.png" alt="20211210170559"></p>
+<blockquote>
+<p><font color="#008000">如上图所示，通过在离线混部可以动态调度离线业务和在线业务，让不同类型业务在不同的时间段运行以提升资源利用率。对于计算密集型业务和内存密集型业务，可以使用亲和性调度，为业务分配更合适的节点，以及通过taints/tolerations 策略隔离某些node给特定的业务场景使用，有效提升资源利用率。 </font></p>
+</blockquote>
+</li>
+</ol>
+<h2 id="提升资源利用率的方法"><a href="#提升资源利用率的方法" class="headerlink" title="提升资源利用率的方法"></a>提升资源利用率的方法</h2><p>   主要从两方面着手：一是利用原生的 Kubernetes 能力手动进行资源的划分和限制；二是结合业务特性的自动化方案。这里暂时介绍利用k8s原生能力进行资源的划分和限制。</p>
+<h3 id="如何资源划分和限制"><a href="#如何资源划分和限制" class="headerlink" title="如何资源划分和限制"></a>如何资源划分和限制</h3><blockquote>
+<p>设想，你是个集群管理员，现在有4个业务部门使用同一个集群，你的责任是保证业务稳定性的前提下，让业务真正做到资源的按需使用。为了有效提升集群整体的资源利用率，这时就需要限制各业务使用资源的上限，以及通过一些默认值防止业务过量使用。</p>
+</blockquote>
+<p>理想情况下，业务应该根据实际情况，设置合理的 Request 和 Limit。（Request 用于对资源的占位，表示容器至少可以获得的资源；Limit 用于对资源的限制，表示容器至多可以获得的资源。）这样更利于容器的健康运行、资源的充分使用。但实际上用户经常忘记设置容器对资源的 Request 和 Limit。此外，对于共享使用一个集群的团队/项目来说，他们通常都将自己容器的 Request 和 Limit 设置得很高以保证自己服务的稳定性。</p>
+<table>
+<thead>
+<tr>
+<th align="left"></th>
+<th align="right">Request</th>
+<th align="center">Limit</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">CPU（核）</td>
+<td align="right">0.25</td>
+<td align="center">0.5</td>
+</tr>
+<tr>
+<td align="left">Memory(MiB)</td>
+<td align="right">256</td>
+<td align="center">1024</td>
+</tr>
+</tbody></table>
+<p>为了更细粒度的划分和管理资源，可以设置命名空间级别的 Resource Quota 以及 Limit Ranges。</p>
+<h3 id="使用-Resource-Quota-划分资源"><a href="#使用-Resource-Quota-划分资源" class="headerlink" title="使用 Resource Quota 划分资源"></a>使用 Resource Quota 划分资源</h3><blockquote>
+<p>如果你管理的某个集群有4个业务，为了实现业务间的隔离和资源的限制，你可以使用命名空间和 Resource Quota</p>
+</blockquote>
+<p>Resource Quota 用于设置命名空间资源的使用配额，命名空间是 Kubernetes 集群里面的一个隔离分区，一个集群里面通常包含多个命名空间，例如 Kubernetes 用户通常会将不同的业务放在不同的命名空间里，你可以为不同的命名空间设置不同的 Resource Quota，以限制一个命名空间对集群整体资源的使用量，达到预分配和限制的效果。Resource Quota 主要作用于如下方面，具体可<a target="_blank" rel="noopener" href="https://kubernetes.io/docs/concepts/policy/resource-quotas/">查看</a>。</p>
+<ul>
+<li>计算资源：所有容器对 CPU 和 内存的 Request 以及 Limit 的总和</li>
+<li>存储资源：所有 PVC 的存储资源请求总和</li>
+<li>对象数量：PVC/Service/Configmap/Deployment等资源对象数量的总和</li>
+</ul>
+<p><strong>Resource Quota 使用场景</strong></p>
+<ul>
+<li>给不同的项目/团队/业务分配不同的命名空间，通过设置每个命名空间资源的 Resource Quota 以达到资源分配的目的</li>
+<li>设置一个命名空间的资源使用数量的上限以提高集群的稳定性，防止一个命名空间对资源的过度侵占和消耗</li>
+</ul>
+<p><strong>这里提供一个脚本，来为集群各命名空间设置初始的Resource Quota：</strong></p>
+<blockquote>
+<p><font color="#008000">该脚本借助kubectl-view-allocations 插件获取集群各个命名空间当前所有pod所设置的request和limit总和，然后在此基础之上上浮30%用于设置命名空间的request和limit Resource Quota。后续可通过集群具体情况，调整对应配置 </font></p>
+</blockquote>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#!/bin/bash</span></span><br><span class="line"><span class="built_in">set</span> -xe</span><br><span class="line"><span class="comment">#################################################################################</span></span><br><span class="line"><span class="comment"># Function: 添加默认的ResourceQuota                                             #</span></span><br><span class="line"><span class="comment"># 限制ns的cpu和memory的request和limit总量(脚本创建的默认值为当前ns下的总和*1.3) #</span></span><br><span class="line"><span class="comment">#Date: 2021/12/06                                                               #</span></span><br><span class="line"><span class="comment">#################################################################################</span></span><br><span class="line"></span><br><span class="line">BASEDIR=$(<span class="built_in">cd</span> <span class="string">&quot;<span class="subst">$(dirname <span class="string">&quot;<span class="variable">$0</span>&quot;</span>)</span>&quot;</span>;<span class="built_in">pwd</span>)</span><br><span class="line">RQ_DIR=<span class="string">&quot;<span class="variable">$BASEDIR</span>/resourcequota&quot;</span></span><br><span class="line"></span><br><span class="line"><span class="function"><span class="title">create_dir</span></span>() &#123;</span><br><span class="line">    <span class="keyword">if</span> [ ! -d <span class="string">&quot;<span class="variable">$@</span>&quot;</span> ]; <span class="keyword">then</span></span><br><span class="line">        mkdir <span class="string">&quot;<span class="variable">$@</span>&quot;</span></span><br><span class="line">    <span class="keyword">fi</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="function"><span class="title">ceil</span></span>() &#123;</span><br><span class="line">	floor=$(<span class="built_in">echo</span> <span class="string">&quot;scale=0;<span class="variable">$1</span>/1&quot;</span>|bc -l)</span><br><span class="line">	add=$(awk -v num1=<span class="variable">$floor</span> -v num2=<span class="variable">$1</span> <span class="string">&#x27;BEGIN&#123;print(num1&lt;num2)?&quot;1&quot;:&quot;0&quot;&#125;&#x27;</span>)</span><br><span class="line">	<span class="built_in">echo</span> `expr <span class="variable">$floor</span> + <span class="variable">$add</span>`</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="title">create_rq</span></span>() &#123;</span><br><span class="line">    create_dir <span class="variable">$RQ_DIR</span></span><br><span class="line">    <span class="keyword">for</span> i <span class="keyword">in</span> $(kubectl get ns|grep -v <span class="string">&quot;NAME&quot;</span> |awk <span class="string">&#x27;&#123;print $1&#125;&#x27;</span>)</span><br><span class="line">    <span class="keyword">do</span></span><br><span class="line">        <span class="comment">#判断ns下面是否有pod</span></span><br><span class="line">        pod_num=$(kubectl get pods -n <span class="variable">$i</span> 2&gt;/dev/null | wc -l|tr -d <span class="string">&quot; &quot;</span>)</span><br><span class="line">        <span class="keyword">if</span> [ <span class="string">&quot;<span class="variable">$pod_num</span>&quot;</span> -eq 0 ];<span class="keyword">then</span></span><br><span class="line">            <span class="built_in">continue</span></span><br><span class="line">	<span class="keyword">fi</span></span><br><span class="line">        ns_dir=<span class="string">&quot;<span class="variable">$RQ_DIR</span>/<span class="variable">$i</span>&quot;</span></span><br><span class="line">        create_dir <span class="variable">$ns_dir</span></span><br><span class="line">        <span class="comment">#借助kubectl-view-allocations插件获取ns下cpu和memory的request/limit总量</span></span><br><span class="line">        request_cpu=$(ceil $(<span class="variable">$BASEDIR</span>/kubectl-view-allocations -g namespace -n <span class="variable">$i</span> -r cpu -o csv|grep <span class="variable">$i</span>|awk -F <span class="string">&#x27;,&#x27;</span> <span class="string">&#x27;&#123;printf(&quot;%.1f&quot;), $5*1.3&#125;&#x27;</span>))</span><br><span class="line">        request_mem=$(ceil $(<span class="variable">$BASEDIR</span>/kubectl-view-allocations -g namespace -n <span class="variable">$i</span> -r memory -o csv|grep <span class="variable">$i</span>|awk -F <span class="string">&#x27;,&#x27;</span> <span class="string">&#x27;&#123;printf(&quot;%.1f&quot;), $5*1.3/1024/1024/1024&#125;&#x27;</span>))</span><br><span class="line">        limit_cpu=$(ceil $(<span class="variable">$BASEDIR</span>/kubectl-view-allocations -g namespace -n <span class="variable">$i</span> -r cpu -o csv|grep <span class="variable">$i</span>|awk -F <span class="string">&#x27;,&#x27;</span> <span class="string">&#x27;&#123;printf(&quot;%.1f&quot;), $7*1.3&#125;&#x27;</span>))</span><br><span class="line">        limit_mem=$(ceil $(<span class="variable">$BASEDIR</span>/kubectl-view-allocations -g namespace -n <span class="variable">$i</span> -r memory -o csv|grep <span class="variable">$i</span>|awk -F <span class="string">&#x27;,&#x27;</span> <span class="string">&#x27;&#123;printf(&quot;%.1f&quot;), $7*1.3/1024/1024/1024&#125;&#x27;</span>))</span><br><span class="line"></span><br><span class="line">        <span class="comment">#创建yaml文件</span></span><br><span class="line">        cat &lt;&lt;<span class="string">EOF &gt; $ns_dir/$i-ResourceQuota.yaml</span></span><br><span class="line"><span class="string">apiVersion: v1</span></span><br><span class="line"><span class="string">kind: ResourceQuota</span></span><br><span class="line"><span class="string">metadata:</span></span><br><span class="line"><span class="string">  name: compute-resources</span></span><br><span class="line"><span class="string">  namespace: $i</span></span><br><span class="line"><span class="string">spec:</span></span><br><span class="line"><span class="string">  hard:</span></span><br><span class="line"><span class="string">    requests.cpu: &quot;$request_cpu&quot;</span></span><br><span class="line"><span class="string">    requests.memory: &quot;$&#123;request_mem&#125;Gi&quot;</span></span><br><span class="line"><span class="string">    limits.cpu: &quot;$limit_cpu&quot;</span></span><br><span class="line"><span class="string">    limits.memory: &quot;$&#123;limit_mem&#125;Gi&quot;</span></span><br><span class="line"><span class="string">EOF</span></span><br><span class="line"></span><br><span class="line">    	<span class="comment">#kubectl apply</span></span><br><span class="line">    	kubectl apply -f <span class="variable">$ns_dir</span>/<span class="variable">$i</span>-ResourceQuota.yaml</span><br><span class="line">    <span class="keyword">done</span></span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">create_rq</span><br></pre></td></tr></table></figure>
+<p>执行完之后，会在当前目录生成一个resourceQuota目录，里面包含各个命名空间的ResourceQuota.yaml文件，便于后续根据集群实际情况，进行对应调整。<br><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210171726.png" alt="20211210171726"></p>
+<blockquote>
+<p><font color="red">[注意]：如果命名空间request和limit总和超过了所设置的resourceQuota，那么将无法新建pod，而且设置了resourceQuota后，pod必须配置“limits.cpu,limits.memory,requests.cpu,requests.memory”，否则也无法正常部署，查看event会提示如下报错： </font></p>
+</blockquote>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210172014.png" alt="20211210172014"></p>
+<p>同时可通过监控查看该ns的的资源使用情况是否合理，调整原有各pod的request和limit，以及根据情况调整所设置的resourceQuota。</p>
+<h3 id="使用-Limit-Ranges-限制资源"><a href="#使用-Limit-Ranges-限制资源" class="headerlink" title="使用 Limit Ranges 限制资源"></a>使用 Limit Ranges 限制资源</h3><blockquote>
+<p><font color="red">用户经常忘记设置资源的 Request 和 Limit，或者将值设置得很大怎么办？作为管理员，如果可以为不同的业务设置不同资源使用默认值以及范围，可以有效减少业务创建时的工作量同时，限制业务对资源的过度侵占。</font></p>
+</blockquote>
+<p>与 Resource Quota 对命名空间整体的资源限制不同，Limit Ranges 适用于一个命名空间下的单个容器。可以防止用户在命名空间内创建对资源申请过小或过大容器，防止用户忘记设置容器的 Request 和 Limit。Limit Ranges 主要作用于如下方面，具体可<a target="_blank" rel="noopener" href="https://kubernetes.io/zh/docs/concepts/policy/resource-quotas/">查看</a>。</p>
+<ul>
+<li>计算资源：对所有容器设置 CPU 和内存使用量的范围</li>
+<li>存储资源：对所有 PVC 能申请的存储空间的范围</li>
+<li>比例设置：控制一种资源 Request 和 Limit 之间比例</li>
+<li>默认值：对所有容器设置默认的 Request/Limit，如果容器未指定自己的内存请求和限制，将为它指定默认的内存请求和限制</li>
+</ul>
+<p><strong>Limit Ranges 使用场景</strong></p>
+<ul>
+<li>设置资源使用默认值，以防用户遗忘，也可以避免 <a target="_blank" rel="noopener" href="https://kubernetes.io/docs/tasks/configure-pod-container/quality-service-pod/">QoS</a> 驱逐重要的 Pod</li>
+<li>不同的业务通常运行在不同的命名空间里，不同的业务通常资源使用情况不同，为不同的命名空间设置不同的 Request/Limit 可以提升资源利用率</li>
+<li>限制容器个对资源使用的上下限，保证容器正常运行的情况下，限制其请求过多资源</li>
+</ul>
+<h3 id="调度策略"><a href="#调度策略" class="headerlink" title="调度策略"></a>调度策略</h3><p>Kubernetes 调度机制是 Kubernetes 原生提供的一种高效优雅的资源分配机制，它的核心功能是为每个 Pod 找到最适合它的节点，通过合理利用 Kubernetes 提供的调度能力，根据业务特性配置合理的调度策略，也能有效提高集群中的资源利用率</p>
+<h4 id="节点亲和性"><a href="#节点亲和性" class="headerlink" title="节点亲和性"></a>节点亲和性</h4><ol>
+<li><strong>说明</strong><blockquote>
+<p><font color="#008000">倘若你的某个业务是 CPU 密集型，不小心被 Kubernetes 的调度器调度到内存密集型的节点上，导致内存密集型的 CPU 被占满，但内存几乎没怎么用，会造成较大的资源浪费。如果你能为节点设置一个标记，表明这是一个 CPU 密集型的节点，然后在创建业务负载时也设置一个标记，表明这个负载是一个 CPU 密集型的负载，Kubernetes 的调度器会将这个负载调度到 CPU 密集型的节点上，这种寻找最合适的节点的方式，将有效提升资源利用率。</font></p>
+</blockquote>
+</li>
+</ol>
+<p>创建 Pod 时，可以设置节点亲和性，即指定 Pod 想要调度到哪些节点上（这些节点是通过 K8s Label）来指定的。</p>
+<ol start="2">
+<li><strong>节点亲和性使用场景</strong></li>
+</ol>
+<p>节点亲和性非常适合在一个集群中有不同资源需求的工作负载同时运行的场景。比如说，k8s集群节点有 CPU 密集型的机器，也有内存密集型的机器。如果某些业务对 CPU 的需求远大于内存，此时使用普通的 节点 机器，势必会对内存造成较大浪费。此时可以在集群里添加一批 CPU 密集型的 节点，并且把这些对 CPU 有较高需求的 Pod 调度到这些 节点上，这样可以提升 节点 资源的整体利用率。同理，还可以在集群中管理异构节点（比如 GPU 机器），在需要 GPU 资源的工作负载中指定需要GPU资源的量，调度机制则会帮助你寻找合适的节点去运行这些工作负载。</p>
+<h4 id="Taints和Tolerations（污点和容忍）"><a href="#Taints和Tolerations（污点和容忍）" class="headerlink" title="Taints和Tolerations（污点和容忍）"></a>Taints和Tolerations（污点和容忍）</h4><ol>
+<li><strong>说明</strong><blockquote>
+<p><font color="#008000">我们说到的的NodeAffinity节点亲和性，是在pod上定义的一种属性，使得Pod能够被调度到某些node上运行。Taint刚好相反，它让Node拒绝Pod的运行。<br>Taint需要与Toleration配合使用，让pod避开那些不合适的node。在node上设置一个或多个Taint后，除非pod明确声明能够容忍这些“污点”，否则无法在这些node上运行。Toleration是pod的属性，让pod能够（注意，只是能够，而非必须）运行在标注了Taint的node上。</font></p>
+</blockquote>
+</li>
+</ol>
+<p>创建 Pod 时，可以通过设置Taints和Tolerations，来让某些node只允许某些特定的pod</p>
+<ol start="2">
+<li><strong>Taints和Tolerations场景</strong></li>
+</ol>
+<ul>
+<li><strong>节点独占</strong></li>
+</ul>
+<p>如果想要拿出一部分节点，专门给特定的应用使用，则可以为节点添加这样的Taint：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">kubectl taint nodes nodename dedicated=groupName:NoSchedule</span><br></pre></td></tr></table></figure>
+<p>然后给这些应用的pod加入相应的toleration，则带有合适toleration的pod就会被允许同使用其他节点    一样使用有taint的节点。然后再将这些node打上指定的标签，再通过nodeSelector或者亲和性调度的方式，要求这些pod必须运行在指定标签的节点上。</p>
+<ul>
+<li><strong>具有特殊硬件设备的节点</strong></li>
+</ul>
+<p>在集群里，可能有一小部分节点安装了特殊的硬件设备，比如GPU芯片。用户自然会希望把不需要占用这类硬件的pod排除在外。以确保对这类硬件有需求的pod能够顺利调度到这些节点上。可以使用下面的命令为节点设置taint：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">kubectl taint nodes nodename special=<span class="literal">true</span>:NoSchedule</span><br><span class="line">kubectl taint nodes nodename special=<span class="literal">true</span>:PreferNoSchedule</span><br></pre></td></tr></table></figure>
+
+<p>然后在pod中利用对应的toleration来保障特定的pod能够使用特定的硬件。然后同样的，我们也可以使用标签或者其他的一些特征来判断这些pod，将其调度到这些特定硬件的服务器上</p>
+<ul>
+<li><strong>应对节点故障</strong></li>
+</ul>
+<p>在节点故障时，可以通过TaintBasedEvictions功能自动将节点设置Taint，然后将pod驱逐。但是在一些场景下，比如说网络故障造成的master与node失联，而这个node上运行了很多本地状态的应用即使网络故障，也仍然希望能够持续在该节点上运行，期望网络能够快速恢复，从而避免从这个node上被驱逐。Pod的Toleration可以这样定义：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="attr">tolerations:</span></span><br><span class="line"><span class="bullet">-</span> <span class="attr">key:</span> <span class="string">&quot;node.alpha.kubernetes.io/unreachable&quot;</span></span><br><span class="line">  <span class="attr">operator:</span> <span class="string">&quot;Exists&quot;</span></span><br><span class="line">  <span class="attr">effect:</span> <span class="string">&quot;NoExecute&quot;</span></span><br><span class="line">  <span class="attr">tolerationSeconds:</span> <span class="number">6000</span></span><br></pre></td></tr></table></figure>
+
+
+<p>未完待续。。。</p>
+
+    </div>
+
+    
+    
+    
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/k8s/" rel="tag"># k8s</a>
+              <a href="/tags/kubernetes/" rel="tag"># kubernetes</a>
+              <a href="/tags/%E7%A8%B3%E5%AE%9A%E6%80%A7/" rel="tag"># 稳定性</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2021/12/10/%E5%88%A9%E7%94%A8%E5%88%86%E5%B1%82%E6%9C%BA%E5%88%B6%E4%BC%98%E5%8C%96DockerImage/" rel="prev" title="利用分层机制优化Docker Image">
+      <i class="fa fa-chevron-left"></i> 利用分层机制优化Docker Image
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#%E6%8F%90%E5%8D%87%E8%B5%84%E6%BA%90%E5%88%A9%E7%94%A8%E7%8E%87"><span class="nav-number">1.</span> <span class="nav-text">提升资源利用率</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B5%84%E6%BA%90%E6%B5%AA%E8%B4%B9%E5%9C%BA%E6%99%AF"><span class="nav-number">1.1.</span> <span class="nav-text">资源浪费场景</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%8F%90%E5%8D%87%E8%B5%84%E6%BA%90%E5%88%A9%E7%94%A8%E7%8E%87%E7%9A%84%E6%96%B9%E6%B3%95"><span class="nav-number">1.2.</span> <span class="nav-text">提升资源利用率的方法</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%A6%82%E4%BD%95%E8%B5%84%E6%BA%90%E5%88%92%E5%88%86%E5%92%8C%E9%99%90%E5%88%B6"><span class="nav-number">1.2.1.</span> <span class="nav-text">如何资源划分和限制</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E4%BD%BF%E7%94%A8-Resource-Quota-%E5%88%92%E5%88%86%E8%B5%84%E6%BA%90"><span class="nav-number">1.2.2.</span> <span class="nav-text">使用 Resource Quota 划分资源</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E4%BD%BF%E7%94%A8-Limit-Ranges-%E9%99%90%E5%88%B6%E8%B5%84%E6%BA%90"><span class="nav-number">1.2.3.</span> <span class="nav-text">使用 Limit Ranges 限制资源</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E8%B0%83%E5%BA%A6%E7%AD%96%E7%95%A5"><span class="nav-number">1.2.4.</span> <span class="nav-text">调度策略</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E8%8A%82%E7%82%B9%E4%BA%B2%E5%92%8C%E6%80%A7"><span class="nav-number">1.2.4.1.</span> <span class="nav-text">节点亲和性</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#Taints%E5%92%8CTolerations%EF%BC%88%E6%B1%A1%E7%82%B9%E5%92%8C%E5%AE%B9%E5%BF%8D%EF%BC%89"><span class="nav-number">1.2.4.2.</span> <span class="nav-text">Taints和Tolerations（污点和容忍）</span></a></li></ol></li></ol></li></ol></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Bryant-rh"
+      src="/images/kuli.jpeg">
+  <p class="site-author-name" itemprop="name">Bryant-rh</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">4</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">2</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+
+
+
+      </div>
+        <div class="back-to-top motion-element">
+          <i class="fa fa-arrow-up"></i>
+          <span>0%</span>
+        </div>
+      <!-- 标签云 -->
+      
+        <script type="text/javascript" charset="utf-8" src="/js/tagcloud.js"></script>
+        <script type="text/javascript" charset="utf-8" src="/js/tagcanvas.js"></script>
+        <div class="widget-wrap">
+          <h3 class="widget-title">Tag Cloud</h3>
+          <div id="myCanvasContainer" class="widget tagcloud">
+              <canvas width="250" height="250" id="resCanvas" style="width:100%">
+                <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/docker/" rel="tag">docker</a><span class="tag-list-count">2</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/dockerfile/" rel="tag">dockerfile</a><span class="tag-list-count">2</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/k8s/" rel="tag">k8s</a><span class="tag-list-count">1</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/kubernetes/" rel="tag">kubernetes</a><span class="tag-list-count">1</span></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/%E7%A8%B3%E5%AE%9A%E6%80%A7/" rel="tag">稳定性</a><span class="tag-list-count">1</span></li></ul>
+              </canvas>
+          </div>
+        </div>
+      
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2021</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Bryant-rh</span>
+    <span class="post-meta-divider">|</span>
+    <span class="post-meta-item-icon">
+      <i class="fa fa-chart-area"></i>
+    </span>
+      <span class="post-meta-item-text">站点总字数：</span>
+    <span title="站点总字数">15k</span>
+    <span class="post-meta-divider">|</span>
+    <span class="post-meta-item-icon">
+      <i class="fa fa-coffee"></i>
+    </span>
+      <span class="post-meta-item-text">站点阅读时长 &asymp;</span>
+    <span title="站点阅读时长">14 分钟</span>
+</div>
+<!--
+  <div class="powered-by">由 <a href="https://hexo.io/" class="theme-link" rel="noopener" target="_blank">Hexo</a> & <a href="https://pisces.theme-next.org/" class="theme-link" rel="noopener" target="_blank">NexT.Pisces</a> 强力驱动
+  </div>
+-->
+
+        
+<div class="busuanzi-count">
+  <script async src="https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+    <span class="post-meta-item" id="busuanzi_container_site_uv">
+      <span class="post-meta-item-icon">
+        <i class="fa fa-user"></i>
+      </span>
+      <span class="site-uv" title="总访客量">
+        <span id="busuanzi_value_site_uv"></span>
+      </span>
+    </span>
+    <span class="post-meta-divider">|</span>
+    <span class="post-meta-item" id="busuanzi_container_site_pv">
+      <span class="post-meta-item-icon">
+        <i class="fa fa-eye"></i>
+      </span>
+      <span class="site-pv" title="总访问量">
+        <span id="busuanzi_value_site_pv"></span>
+      </span>
+    </span>
+</div>
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script size="300" alpha="0.6" zIndex="-1" src="[object Object]"></script>
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+  <script defer src="/lib/three/three.min.js"></script>
+    <script defer src="/lib/three/canvas_sphere.min.js"></script>
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '41b88aee6db86483dea7',
+      clientSecret: '947070122c3ff86d89751692813902e5ecfd5a34',
+      repo        : 'bryant-rh.github.io',
+      owner       : 'bryant-rh',
+      admin       : ['bryant-rh'],
+      id          : '869dbda99094237aa83746014bf4702a',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
