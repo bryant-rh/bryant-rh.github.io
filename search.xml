@@ -4,6 +4,8 @@
     <title>如何编写最佳的Dockerfile</title>
     <url>/2021/12/08/%E5%A6%82%E4%BD%95%E7%BC%96%E5%86%99%E6%9C%80%E4%BD%B3%E7%9A%84Dockerfile/</url>
     <content><![CDATA[<p>原文: <a href="https://rock-it.pl/how-to-write-excellent-dockerfiles/">How to write excellent Dockerfiles</a><br /><br><br />Dockerfile的语法非常简单，然而如何加快镜像构建速度，如何减少Docker镜像的大小却不是那么直观，需要积累实践经验。这篇文章可以帮助你快速掌握编写Dockerfile的技巧。</p>
+<span id="more"></span>
+
 <h1 id="目标"><a href="#目标" class="headerlink" title="目标"></a>目标</h1><ul>
 <li>更快的构建速度</li>
 <li>更小的Docker镜像大小</li>
@@ -12,8 +14,6 @@
 <li>增加Dockerfile可读性</li>
 <li>让Docker容器使用起来更简单</li>
 </ul>
-<span id="more"></span>
-
 <h1 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h1><ul>
 <li>编写.dockerignore文件</li>
 <li>容器只运行单个应用</li>
@@ -222,6 +222,104 @@
 ]]></content>
       <tags>
         <tag>docker</tag>
+        <tag>dockerfile</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>利用分层机制优化Docker Image</title>
+    <url>/2021/12/10/%E5%88%A9%E7%94%A8%E5%88%86%E5%B1%82%E6%9C%BA%E5%88%B6%E4%BC%98%E5%8C%96DockerImage/</url>
+    <content><![CDATA[<h1 id="Docker-Image-分层存储"><a href="#Docker-Image-分层存储" class="headerlink" title="Docker Image 分层存储"></a>Docker Image 分层存储</h1><p>为了最大化重用 Image，加快运行速度，减少内存和磁盘的占用，Docker container 运行时所构造的运行环境，实际上是由具有依赖关系的多个 Layer 组成的。如图 1 所示，每一串数字 ID 就代表了一个 Docker Image Layer。当我们在 pull 一个 Docker Image 的时候我们会发现所有依赖的 Layer 文件将会被 download。</p>
+<span id="more"></span>
+
+<p>图 1. Docker Image 分层示意图<br><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210113610.png" alt="20211210113610"></p>
+<p>例如我们一个 Docker App Image 的运行环境是在基础的 Docker Base Image 的基础上，叠加了包含例如 anaconda等各种工具的 Image，再叠加包含模型文档及其相关依赖库的 Image，以及包含了最终应用的code包的 layer。这些 Image 由 AUFS 文件系统加载合并到统一路径中，以只读的方式存在，最后再叠加加载一层可写的空白的 Layer 用作记录对当前运行环境所作的修改。因此，当 Docker Image 每次由一个基础 Image 创建后，新 Image 就自动增加了一层。如图 2 所示:</p>
+<p>图 2. Docker Image Layer 的叠加<br><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210121554.png" alt="20211210121554"></p>
+<h1 id="Docker-Image-衍生单一-Base-Image"><a href="#Docker-Image-衍生单一-Base-Image" class="headerlink" title="Docker Image 衍生单一 Base Image"></a>Docker Image 衍生单一 Base Image</h1><p>随着项目基于 Docker 的使用逐渐增加，Docker Image 的数量也将逐渐增加。随之而来的问题就是如何维护这些 Docker Image 的升级。如果缺乏规划和设计，每个 Docker Image 均来自一个最基础的 OS Image，那么就需要对于所有的 Docker Image 进行重构。如图 3所示：</p>
+<p>图 3. Docker Image 衍生单一 Base Image<br><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210121625.png" alt="20211210121625"></p>
+<p>当环境进行更新升级的时候，如果所有的节点均来自一个基础的 OS Image，重复的 layer 层将会被重复更新。也就意味着，这部分重复的内容会被反复的下载。如果一个 Docker Image 达到了 1G 以上的规模，而每个 Docker Host 节点的更新都需要重新下载新的 Image. 这样环境更新所花费的时间将会是成倍的增加。如图 4 所示，Docker Image 2 和 Docker Image3 均是基于 Docker Image 1</p>
+<p>图 4. 基于同样 Base Image 的 Docker Image Layer 的叠加</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210121705.png" alt="20211210121705"></p>
+<p>图 5. Docker Image Layer 在 Docker Host 上的存储关系</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210121725.png" alt="20211210121725"></p>
+<p>从图 5 可以看出在同一个 Docker host 上 download 来自同样 Base Image 的 Docker Image, Docker 在下载 Image layer 的时候，对于已经存在的 layer 是不会重复下载的。但是如果 layer 不同，即使内部包含的内容一样，也还是会重复下载的.</p>
+<h1 id="利用分层机制优化-Docker-Image"><a href="#利用分层机制优化-Docker-Image" class="headerlink" title="利用分层机制优化 Docker Image"></a>利用分层机制优化 Docker Image</h1><p>通过上两节的介绍，可以发现缺乏良好设计的 Docker Image 会给日后的维护以及我们后续CICD的效率带来较大的问题。接下来就介绍下如何利用分层机制对项目的 Docker Image 进行合理的规划。从而提升 Docker 在CICD过程中的可持续性，并提升CICD的效率。</p>
+<h2 id="设计基于分层机制的-Docker-Image"><a href="#设计基于分层机制的-Docker-Image" class="headerlink" title="设计基于分层机制的 Docker Image"></a>设计基于分层机制的 Docker Image</h2><p>假设系统中我们有两个应用 App1 和 App2。 这两个节点的环境信息如下：</p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>APP1</th>
+<th>APP2</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>基础环境镜像 (os)</td>
+<td>Python3.7</td>
+<td>Python3.7</td>
+</tr>
+<tr>
+<td>安全组件(Security tools)</td>
+<td>some-security-framework</td>
+<td>some-security-framework</td>
+</tr>
+<tr>
+<td>通用工具（General tools）</td>
+<td>make/gcc/path/wget/sudo/tar</td>
+<td>make/gcc/path/wget/sudo/tar</td>
+</tr>
+<tr>
+<td>依赖库（Library）</td>
+<td>pip install -y some-dependences</td>
+<td>pip install -y some-dependences</td>
+</tr>
+<tr>
+<td>模型组件（Model）</td>
+<td>some-path/dust.model</td>
+<td>some-path/dust.model</td>
+</tr>
+<tr>
+<td>代码（Code）</td>
+<td>code.1</td>
+<td>code.2</td>
+</tr>
+<tr>
+<td>配置（Config）</td>
+<td>app1.conf</td>
+<td>app2.conf</td>
+</tr>
+</tbody></table>
+<p>通过上表环境信息的对比，我们发现在这两个不同引用的节点上，不同的部分只是 最后的代码code 的和config 文件。<br>对于其他相同的部分，我们可以考虑通过 Docker Image Layer 的概念将其复用。从而最大限度发挥 Docker 的能力。<br>将上表中的两部分环境信息以分类为节点名，重新以树状结构组织如图 6 所示。</p>
+<p>图6.环境配置树状图 1</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122004.png" alt="20211210122004"></p>
+<p>图7.环境配置树状图 2</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122028.png" alt="20211210122028"></p>
+<p>最后将图中的两个树状结构图进行叠加将重复的节点进行合并，最后得出如下树状结构图：</p>
+<p>图 8. 环境配置树状图 3</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122059.png" alt="20211210122059"></p>
+<p>现在我们已经基于 Docker Image 的分层存储机制完成了一个初步的Docker Image 的规划。接下来就可以根据上图结构分别制作 Image。最终我们将会有三个 Base Image，和最终加入代码的业务镜像。<br>同时基于此，我们的Dockerfile也类比如下：<br>这里本该是 4个 gitlab 仓库制作的 4个镜像。 为了方便展示镜像复用关系， 用一个代码块展示</p>
+<figure class="highlight dockerfile"><table><tr><td class="code"><pre><span class="line"><span class="comment"># f1: 运维安全团队增加优化基础安全组件</span></span><br><span class="line"><span class="keyword">FROM</span> python3</span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> apt install -y some-security-framework</span></span><br><span class="line"><span class="comment"># push: hub-dev.rockontrol.com/libary/python3</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># f2: 架构师安装基础架构</span></span><br><span class="line"><span class="keyword">FROM</span> hub-dev.rockontrol.com/libary/python3</span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> wget -c anaconda12.sh &amp;&amp; ./anaconda12.sh &amp;&amp; rm -f anaconda12.sh</span></span><br><span class="line"><span class="comment"># push: hub-dev.rockontrol.com/rk-ai-tools/env-anaconda:12</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># f3: 制作模型镜像</span></span><br><span class="line"><span class="keyword">FROM</span> hub-dev.rockontrol.com/rk-ai-tools/<span class="keyword">env</span>-anaconda:<span class="number">12</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> pip install -y some-dependences</span></span><br><span class="line"><span class="keyword">RUN</span><span class="bash"> wget -c s3.rockontrol.com/some-path/dust.model -O /some/path</span></span><br><span class="line"><span class="comment"># push: hub-dev.rockontrol.com/rk-ai-tools/env-anaconda-dust:runtime</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># f4: 制作业务镜像</span></span><br><span class="line"><span class="keyword">FROM</span> hub-dev.rockontrol.com/rk-ai-tools/<span class="keyword">env</span>-anaconda-dust:runtime</span><br><span class="line"><span class="keyword">ADD</span><span class="bash"> code /workspace/code</span></span><br><span class="line"><span class="keyword">ENTRYPOINT</span><span class="bash"> [ <span class="string">&quot;/bin/bash&quot;</span>, <span class="string">&quot;/entrypoint.sh&quot;</span> ]</span></span><br><span class="line"><span class="comment"># push: hub-dev.rockontrol.com/rk-ai-pollution/srv-some-appname-amd64:1.0.0-1234567</span></span><br></pre></td></tr></table></figure>
+
+<p>如图 9所示，其中 Base Image，将作为项目中所有 Docker Image 的 base，Security tools/General tools/Library Image 可以在其基础上继续衍生出其他的 Image。Model  Image 可以在其基础上创建更多类型的应用 Image。</p>
+<p>图9. 基于分层存储的 Docker Image 树的多版本衍生<br><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122210.png" alt="20211210122210"></p>
+<h2 id="基于分层机制的-Docker-Image-的实践"><a href="#基于分层机制的-Docker-Image-的实践" class="headerlink" title="基于分层机制的 Docker Image 的实践"></a>基于分层机制的 Docker Image 的实践</h2><p>如图 10 所示, 按照之前介绍的安装 Security tools/General tools/Library 的Docker Image 大小在 1.8 G 左右。以此为基础创建的的 App Image 的大小在 1.9G 左右。</p>
+<p>图 10. Docker Image 分层存储实验 1<br><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122240.png" alt="20211210122240"></p>
+<p>在一个已经 download 了 Liberty Docker Image 的环境下下载 App Image。如图 12 所示，可以看到已经存在的 layer 已经是 complete 状态。 唯一 download 的部分只有新增加的 EAR 所产生的新的 layer。所需时间仅仅为 1 分 33 秒。</p>
+<p>图 11. Docker Image 分层存储实验 2</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122312.png" alt="20211210122312"></p>
+<p>如果直接在一个不存在 Liberty Docker Image 的 server 上去 download App Docker Image, 如图 13 所示，我们可以看到所需要的时间将超过 7 分钟。</p>
+<p>图 12. Docker Image 分层存储实验 3</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122332.png" alt="20211210122332"></p>
+<p>通过图 13 可以发现其他 layer 的 download 时间要超过 4 分钟，如果反复对这些重复的 Docker Image layer 进行下载更新，将会严重影响环境更新的效率。随着不同 Image 之间在 Docker Image Layer 上的差异越大，所花费的下载 Docker Image 的代价也将越大。</p>
+<p>图 13. Docker Image 分层存储实验 4</p>
+<p><img src="https://cdn.jsdelivr.net/gh/bryant-rh/blog-picture-bed/blog-images/20211210122351.png" alt="20211210122351"></p>
+<h1 id="小结"><a href="#小结" class="headerlink" title="小结"></a>小结</h1><p>通过上文的描述和实际测试可知，如果我们能把镜像做一个合理的分层，不但能缩短拉取镜像的时间，提高CICD的效率，更能划分不同团队不同人员的角色，每个人只专注自己职责相关的镜像，然后不同团队或同团队其他人员可以在其基础上，再构建自己的镜像，层层递进，最终制作一个业务发布的镜像。</p>
+]]></content>
+      <categories>
+        <category>docker</category>
+      </categories>
+      <tags>
+        <tag>docker</tag>
+        <tag>dockerfile</tag>
       </tags>
   </entry>
   <entry>
